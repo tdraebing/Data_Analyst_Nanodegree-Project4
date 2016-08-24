@@ -14,6 +14,8 @@ opts_chunk$set(chache=TRUE)
 opts_chunk$set(echo=FALSE)
 opts_chunk$set(message=FALSE)
 opts_chunk$set(warning=FALSE)
+
+statusColor <- c("forestgreen", "orange", "red")
 ```
 ```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
 # Load all of the packages that you end up using
@@ -98,7 +100,9 @@ getSummary <- function(x, decreasing = T, head = T){
 #generate histograms for the univariate analysis
 univariate <- function(data, 
                        varname,
-                       log = F){
+                       log = F, 
+                       bins = 30,
+                       flip=F){
   if(log){
     d <- log10(data[[varname]] + 1)
   }else{
@@ -108,8 +112,8 @@ univariate <- function(data,
   p <- ggplot(data, aes(x = d)) +
     labs(x = varname)
   
-  if (class(data[[varname]]) == 'numeric'){
-    p <- p + geom_histogram()
+  if (class(data[[varname]]) == 'numeric' || class(data[[varname]]) == 'integer'){
+    p <- p + geom_histogram(bins=bins)
     p <- p + scale_x_continuous()
   } else {
     p <- p + geom_bar()
@@ -122,6 +126,9 @@ univariate <- function(data,
   if (class(data[[varname]]) == 'Date'){
     p <- p + scale_x_date()
   } 
+  if(flip){
+    p <- p + coord_flip()
+  }
   p <- p + theme(axis.text.x = element_text(angle = 90, hjust = 1))
   p
 }
@@ -129,7 +136,8 @@ univariate <- function(data,
 #generate a line frequency plot
 lineFrequency <- function(x, 
                           c,
-                          xlab){
+                          xlab,
+                          cor=F){
   #calculate fractions for each value level
   subData <- data.frame(independent = x, dependent = c)
   subData[which(subData$independent == 0), 'independent'] = NA
@@ -140,6 +148,8 @@ lineFrequency <- function(x,
   } else{
     subData$independent <- as.numeric(as.character(subData$independent))
   }
+  
+  
 
   p <- ggplot(data = subData, 
               aes(x = independent, 
@@ -148,7 +158,25 @@ lineFrequency <- function(x,
     geom_point() + 
     geom_smooth(method=lm) + 
     labs(x=xlab, 
-         y='Frequency')
+         y='Frequency') + 
+  scale_color_manual(values=statusColor, 
+                     name = "Water Point Status")
+  
+  #calculate correlation coefficient
+  if(cor){
+    wideSubData <- reshape(subData, 
+                         idvar='independent', 
+                         timevar='dependent', 
+                         direction='wide')
+    for (i in unique(c)){
+      print(i)
+      print(cor.test(as.numeric(wideSubData$independent),
+                   wideSubData[[paste0('Freq.', i)]]))
+    }
+  }
+  
+  
+  
   p
 }
 
@@ -178,7 +206,11 @@ normalizedCounts <- function(x, y, breaks = NULL, labels = NULL){
 }
 
 # generate stacked bar plots plotting categorical variable in an absolute and relative way
-bivariate <- function(x, y, breaks = NULL, labels = NULL, facet = factor()){
+bivariate <- function(x, y, 
+                      breaks = NULL, 
+                      labels = NULL, 
+                      facet = factor(), 
+                      colors = statusColor){
   df <- data.frame(x=x, y=y)
   rel_count_functional <- nrow(subset(df, y=='functional'))/nrow(df)
   p1 <- ggplot(df, 
@@ -203,13 +235,17 @@ bivariate <- function(x, y, breaks = NULL, labels = NULL, facet = factor()){
   p1 <- p1 + theme(axis.text.x = element_text(angle = 90, 
                                               hjust = 1, 
                                               vjust = 0.3),
-                   legend.position="none")
+                   legend.position="none") + 
+             scale_fill_manual(values=colors, 
+                               name = "Water Point Status")
   
   p2 <- p2 + geom_hline(yintercept=rel_count_functional) +
              theme(axis.text.x = element_text(angle = 90, 
                                               hjust = 1, 
                                               vjust = 0.3),
-                   legend.position="top")
+                   legend.position="top") + 
+             scale_fill_manual(values=colors, 
+                               name = "Water Point Status")
   
   multiplot(p1, p2, cols=2)
 }
@@ -256,6 +292,33 @@ binmap <- function(data, to_bin, log=F){
   }
   p
 }
+
+
+multivariate <- function(x,y,z, log = F, names=c('x','y','z')){
+  df <- data.frame(x = x, y=y, z=z)
+  p <- ggplot(subset(df,y>0),
+              aes(x, y)) + 
+    scale_fill_manual(values = statusColor, name=names[3]) + 
+    theme(axis.text.x = element_text(angle = 90, hjust = 1),
+                   legend.position="top") +
+    labs(x=names[1], y=names[2])
+  if (log){
+    p <- p + scale_y_log10()
+  }
+  p1 <- p + geom_boxplot()
+  p2 <- p + geom_boxplot(aes(fill=z))
+  multiplot(p1,p2,cols=1)
+}
+
+multipie <- function(x,y,z){
+  df <- data.frame(x=x, y=y, z=z)
+  tab <- as.data.frame(table(df))
+  tab <- melt(tab)
+
+  ggplot(tab, aes(x="", y= value, fill = z)) +
+    facet_grid(x~y) +
+    geom_bar(stat = "identity", width = 1, position = position_fill()) + coord_polar(theta = "y")
+}
 ```
 
 
@@ -292,7 +355,7 @@ The list of variables is quite long. To structure the analysis a bit, they were 
   *	region*
   *	subvillage
   *	ward
-2.	Waterpoint properties
+2.	Water point properties
   *	amount_tsh
   *	construction_year
   *	extraction_type*
@@ -302,7 +365,7 @@ The list of variables is quite long. To structure the analysis a bit, they were 
   *	status_group
   *	water_quality
   *	waterpoint_type
-3.	Waterpoint management
+3.	Water point management
   *	funder
   *	installer
   *	management*
@@ -346,11 +409,21 @@ The data points were not collected throughout the whole time, but in blocks. The
 
 ###num_private
 
-```{r }
+```{r}
 getSummary(data$num_private, F)
 univariate(data, 'num_private')
 ```
-The data is extremely skewed with mostly zeros, which probably represent NAs. The description of the data variables on the drivendata.org website does not explain the meaning of this variable. Intuitively it might be an internal id and thus is probably worthless for prediction.
+
+The data is extremely skewed with mostly zeros, which probably represent NAs. Thus here they are plotted again with the zeros removed and with a log-scaled x-axis:
+
+```{r}
+getSummary(subset(data, num_private != 0, select = num_private), F)
+p <- univariate(subset(data, num_private != 0), 'num_private', bins=10)
+p <- p + scale_x_continuous(trans='log', breaks=c(7,140,2800))
+p
+```
+
+It seems that low numbers are slightly more common.The description of the data variables on the drivendata.org website does not explain the meaning of this variable. Intuitively it might be an internal id and thus is probably worthless for prediction. 
 
 ###recorded_by
 
@@ -364,17 +437,19 @@ All data points were recorded by the same company; thus this variable won't be u
 
 ```{r }
 getSummary(data$wpt_name, T)
-univariate(data, 'wpt_name')
+p <- univariate(data, 'wpt_name')
+p <- p + scale_y_continuous(limits=c(0,7.5))
+p
 ```
-This variable represents the name of the water point. The dataset does not give information about whether each water point was just recorded once. Thus this variable might help identifying repeated recording of water points. But some names seem to be generic, like 'school', which speaks against using this variable for the purpose of finding repeated recordings.
+This variable represents the name of the water point. Most data points were recorded just once, but some names are used up to seven times. Thus this variable might help identifying repeated recording of water points. But some names seem to be generic, like 'school', which speaks against using this variable for the purpose of finding repeated recordings.
 
 ##Geographical location
 
 
 ### basin
-```{r }
+```{r fig.height=6}
 getSummary(data$basin, T)
-univariate(data, 'basin')
+univariate(data, 'basin', flip=T)
 ```
 The basin variable gives the geographical location of the water point and in some cases probably also the source of the water as for Lake Victoria for example. With nine levels the danger of overfitting should be minimal. And since basins are caused by natural water sources they might directly influence the water points' functionality.
 
@@ -383,6 +458,13 @@ The basin variable gives the geographical location of the water point and in som
 ```{r }
 getSummary(data$gps_height, T)
 univariate(data, 'gps_height')
+```
+
+There are again a lot of apparent NAs represented as 0. They were removed for the following plot:
+
+```{r}
+getSummary(subset(data, data$gps_height != 0, select=gps_height), T)
+univariate(subset(data, data$gps_height != 0), 'gps_height')
 ```
 
 The height on which the water point is situated might influence the water points functionality, e.g. by available water sources or climate. The span of heights is quite big, ranging from -90m to 2770m. The large number of water points at 0m is probably rather due to them being NAs, but they could in theory also be the real height.
@@ -440,7 +522,7 @@ getSummary(data$subvillage, F)
 univariate(data, 'subvillage')
 ```
 
-Subvillage is the finest federal unit and contains even more factor levels. This variable should behave similar to the wards variable.
+Subvillage is the finest federal unit and contains even more factor levels, even so much, that some bars cannot be visualized in the plot as the one for Madukani, which would be the highest one with a count of 508. This variable should behave similar to the wards variable.
 
 ### latitude and longitude
 
@@ -472,7 +554,17 @@ getSummary(data$amount_tsh, T)
 univariate(data, 'amount_tsh')
 ```
 
-The total static head (tsh) is a rather technical measure. Most values are given as zero. Tsh is a measure giving the work a pump must perform to deliver water to the surface. Since this is a pretty technical value, it is probably only measured at water points that are regularly maintained. Thus the high number of zeros, which probably are NAs, might be indicative of bad maintenance. But TSH is also only a value needed for water points worked by a pumping mechanism. Since only a fraction of water points will use pumping mechanisms, some NAs can also be accounted by this fact.
+The total static head (tsh) is a rather technical measure. Most values are given as zero. Tsh is a measure giving the work a pump must perform to deliver water to the surface. Since this is a pretty technical value, it is probably only measured at water points that are regularly maintained. Thus the high number of zeros, which probably are NAs, might be indicative of bad maintenance. But TSH is also only a value needed for water points worked by a pumping mechanism. Since only a fraction of water points will use pumping mechanisms, some NAs can also be accounted by this fact. To explore the available data without NAs it is plotted without zeros and on a log-scale:
+
+```{r}
+getSummary(subset(data, amount_tsh != 0, select = amount_tsh), F)
+p <- univariate(subset(data, amount_tsh != 0), 'amount_tsh')
+p <- p + scale_x_continuous(trans='log10')
+p
+```
+
+The distribution roughly resembles a normal distribution, if log-transformed, but there are some values over- or underrepresented respectively. This might indicate that there might be an outside influence on the TSH metric of the pumps.
+
 
 ###	construction_year
 
@@ -485,15 +577,15 @@ The number of water points built each year seems to be growing although it could
 
 ###	extraction_type*
 
-```{r }
+```{r fig.height=15}
 getSummary(data$extraction_type, T)
-p1 <- univariate(data, 'extraction_type')
+p1 <- univariate(data, 'extraction_type', flip=T)
 getSummary(data$extraction_type_group, T)
-p2 <- univariate(data, 'extraction_type_group')
+p2 <- univariate(data, 'extraction_type_group', flip=T)
 getSummary(data$extraction_type_class, T)
-p3 <- univariate(data, 'extraction_type_class')
+p3 <- univariate(data, 'extraction_type_class', flip=T)
 
-multiplot(p1, p2, p3, cols=3)
+multiplot(p1, p2, p3, cols=1)
 ```
 
 These three variables represent the same data with different levels of detail. In the higher detailed variables (extraction_type, extraction_type_group) the level of detail for all levels does not seem consistent (e.g. India Mark ii vs. Gravity). This might be unsuitable for prediction. Since using all of those features does not make sense, since none should add significant additional information, the variable with the lowest amount of detail, but being the cleanest might be the best choice.
@@ -501,12 +593,12 @@ It seems there are only few motorized water points. The most are operated by nat
 
 ###	water_quality and quality_group
 
-```{r }
+```{r fig.height=10}
 getSummary(data$water_quality, T)
-p1 <- univariate(data, 'water_quality')
+p1 <- univariate(data, 'water_quality', flip=T)
 getSummary(data$quality_group, T)
-p2 <- univariate(data, 'quality_group')
-multiplot(p1, p2, cols=2)
+p2 <- univariate(data, 'quality_group', flip=T)
+multiplot(p1, p2, cols=1)
 ```
 
 For the water quality there are again more than one variable of which one was cleaned up by accumulating levels that may have been overly detailed. It seems that most water points actually serve good quality water.
@@ -526,15 +618,15 @@ For these two variables the levels are actually identical, thus only quantity ha
 
 ###	source*
 
-```{r }
+```{r fig.height=15}
 getSummary(data$source, T)
-p1 <- univariate(data, 'source')
+p1 <- univariate(data, 'source', flip=T)
 getSummary(data$source_type, T)
-p2 <- univariate(data, 'source_type')
+p2 <- univariate(data, 'source_type', flip=T)
 getSummary(data$source_class, T)
-p3 <- univariate(data, 'source_class')
+p3 <- univariate(data, 'source_class', flip=T)
 
-multiplot(p1, p2, p3, cols=3)
+multiplot(p1, p2, p3, cols=1)
 ```
 
 For this variable it might not be the best choice to use the most cleaned up one, since it just differentiates between ground water and surface water or unknown sources. On the other hand, the source_type variable additionally differentiates between subtypes, while still being clean.
@@ -542,7 +634,7 @@ Most water sources are groundwater sources rather than surface water sources, wh
 
 ###	waterpoint_type
 
-```{r }
+```{r fig.height=5}
 getSummary(data$waterpoint_type, T)
 univariate(data, 'waterpoint_type')
 ```
@@ -555,7 +647,8 @@ The waterpoint_type variable seems to be slightly redundant to source_type and e
 
 ```{r }
 getSummary(data$funder, T)
-univariate(data, 'funder')
+p <- univariate(data, 'funder')
+p + scale_y_continuous(trans='log10')
 ```
 
 There are quite a lot of funders for water points, but the government funds by far the most water points. There sheer number of levels will make it useless for direct use in classification, but additional more useful features might be extracted from it.
@@ -564,7 +657,8 @@ There are quite a lot of funders for water points, but the government funds by f
 
 ```{r }
 getSummary(data$installer, T)
-univariate(data, 'installer')
+p <- univariate(data, 'installer')
+p + scale_y_continuous(trans='log10')
 ```
 
 For the installer variable it is similar as for the funder variable. Again the government or a government department (DWE) is the biggest installer.
@@ -609,10 +703,19 @@ Most water points are permitted. But it is unclear whether that means that build
 
 ```{r echo = FALSE}
 getSummary(data$population, T)
-univariate(data, 'population', log=T)
+univariate(data, 'population')
 ```
 
-The population variable is quite skewed. Most water points are in an area with very low population.
+The population variable is quite skewed. Most water points are in an area with very low population. When plotting after removing the zeros and using a logarithmic scale, the plot shows that there are two distinct groups:
+
+```{r}
+getSummary(subset(data, population != 0, select = population), F)
+p <- univariate(subset(data, population != 0), 'population')
+p <- p + scale_x_continuous(trans='log10')
+p
+```
+
+One group of water points have only very few people (< 10) living around them. For the other water points the distribution follows roughly a normal distribution.
 
 ###	public_meeting
 
@@ -634,7 +737,7 @@ p2 <- univariate(data, 'scheme_management')
 multiplot(p1, p2, cols=2)
 ```
 
-The scheme_name variable contains a lot of levels, which probably only contain little information. The overall scheme categories are summarized in the scheme_management variable. The most common theme is the Village Water Committee (VWC), which fits well to the management_group variable, which states that most are managed by user groups.
+The scheme_name variable contains a lot of levels, which are not well plotable and probably only contain little information. The overall scheme categories are summarized in the scheme_management variable. The most common theme is the Village Water Committee (VWC), which fits well to the management_group variable, which states that most are managed by user groups.
 
 ## Summary (Univariate Analysis)
 
@@ -713,11 +816,11 @@ datesubset <- subset(data,
                   date_recorded > as.Date('2011-01-01', '%Y-%m-%d'))
 
 lineFrequency(datesubset$date_recorded,
-              datesubset$status_group, 'Date Recorded')
+              datesubset$status_group, 'Date Recorded', cor=T)
 
 rm(datesubset)
 ```
-There is no major change in status group fractions recorded over time. That is means, that there is no bias due to the recording time and that there were no rare events causing unusual changes, which could lead to outliers negatively influencing prediction efforts. This also means that the date_recorded variable would not be adding a lot of information to a model und is probably not useful.
+There is no major change in status group fractions recorded over time. That is means, that there is no bias due to the recording time and that there were no rare events causing unusual changes, which could lead to outliers negatively influencing prediction efforts. This also means that the date_recorded variable would not be adding a lot of information to a model and is probably not useful.
 
 ### region
 
@@ -773,7 +876,7 @@ As for the gps_height variable, there might also be a sampling problem for amoun
 
 ```{r}
 p <- lineFrequency(data$construction_year,
-              data$status_group, 'Construction Year')
+              data$status_group, 'Construction Year', cor=T)
 p + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3))
 ```
 
@@ -809,7 +912,7 @@ This variable very closely correlates to the status_group variable. Since dry wa
 bivariate(data$source_type, data$status_group)
 ```
 
-Water points using natural water sources (rainwater, rivers/lake, spring) are more often functional than manmade (borehole, dam, shallow well). Surprisingly the 'unknown' category is about average in number of functional water points in contrast to the previous variables.
+Water points using natural water sources (rainwater, rivers/lake, spring) are more often functional than man-made (borehole, dam, shallow well). Surprisingly the 'unknown' category is about average in number of functional water points in contrast to the previous variables.
 
 ### waterpoint_type
 
@@ -901,7 +1004,12 @@ The analysis clearly showed that larger fraction of older water points tends to 
 Other probably more useful predictors would be extraction_type_class, quality_group, quantity_group, payment_type (may be cleaned further by using the following labels: unknown, source_type, never pay, recurring pay, on demand pay), population, and scheme_management. Public_meeting, management_group, waterpoint_type, amount_tsh might be also useful to some extent. But installer_count, funder_count and permit would probably not greatly influence the prediction.
 
 # Multivariate Analysis
-## Influence of the location on functionality
+
+In this data set multivariate analysis becomes complicated really fast, since most variable are categorical. Taking three categorical variables can result in a huge amount of possible combinations. This makes visualizing and interpreting them very complicated. To streamline the exploration in the multivariate analysis three groups of variables that based on the bivariate analysis might be the best candidates for predicting water point functionality: location (region, basin, latitude/longitude, gps_height), age (construction_year) and waterpoint type (source_type, extraction_type_class, waterpoint_type).
+
+## Difference in water point characteristics depending on location
+
+### Influence of the location on functionality
 Plotting every water point onto a map of Tanzania and coloring it by their status does not very intuitively show, whether there is a pattern in the water point's location causing differences in functionality:
 
 
@@ -969,6 +1077,7 @@ ggmap(map) + geom_tile(data=bin_df,
 
 There are some areas that have a high number of bins that contain more nonfunctional water points than functional. Those overlap especially with the southern coast and the area between the lakes Rukwa and Tanganyika, which corresponds well to regions and basins that were identified before in the bivariate analysis. But there are also a lot of bins with mostly nonfunctional water points up the coast and in parts of the inland and coast of Lake Victoria.
 
+### Differences in median construction year between locations
 
 A variable that showed good correlation with functionality in the bivariate analysis was the construction year. Plotted to the map this data also shows that there are three areas with mostly older water points. Two of those overlap well with the regions Mtwara, Lindi and Rukwa, which were already identified as regions with many nonfunctional water points. But also the south of the region Singida has mostly quite old water points, but has only a sparse density of water points.
 There are big areas with unknown construction_year values in the inland. Thus the occurrence of NAs might also be regional.
@@ -977,17 +1086,93 @@ There are big areas with unknown construction_year values in the inland. Thus th
 binmap(data, 'construction_year')
 ```
 
-The median population around water points does not seem to correlate with the location and the functionality in the bins, except for the Rukwa region.
+The map showed clusters of water points with a high median age. To see whether this is reflected in the region- and basin-variable, box plots showing the distribution of construction years by region/basin will be plotted. Additionally the differences in water point status will be analyzed:
 
 ```{r fig.height=10}
-binmap(data, 'population', T)
+multivariate(data$region, data$construction_year, data$status_group, log=F, c('region', 'construction_year', 'status_group'))
 ```
+
+Two of the regions containing areas having a high amount of old water points, Rukwa and Mtwara, indeed have the earliest median construction years. The water points of Lindi on the other hand has a pretty average median age. And while the regions Shinyanga, Pwani, Manyara, which also have above average functional water points also have mostly newer water points, not so Arusha and Iringa, which have the highest fraction of functional water points. Thus the construction year seems to play a more important role in some regions than in others.
+Differentiating in status group shows that non functional water points in every region have a higher median age than functional ones. The difference in both medians varies for the different regions. 
+
+The same is true when grouping by basins:
+
+```{r fig.height=10}
+multivariate(data$basin, data$construction_year, data$status_group,log=F, c('basin', 'construction_year', 'status_group'))
+```
+
+## Dependency of extraction type used
+
+## The influence of the extraction method and age on the waterpoint status
+
+```{r fig.height=10}
+multivariate(data$extraction_type_class, data$construction_year, data$status_group, log=F, c('extraction_type_class', 'construction_year', 'status_group'))
+```
+
+New technologies are developed over time. In case of water extraction methods in Tanzania rope pumps seem to be introduced relatively recently. Hand pumps and submersible also seem to have been less common in the sixties, but they also may already be completely broken and thus not appearing in the dataset. Interestingly the status of hand pumps seems to be less age-dependent than other extraction methods. Water points without a reported extraction method have an earlier median construction year, which could explain at least part of the high fraction of non functional water points in this group. Older wind-powered water points (1960-1990) seem to be nearly all broken down, thus wind-power might be not a good choice for a long lasting water point. A similar but far less severe observation can be seen for the other extraction methods as well, except for maybe hand pumps. Overall hand pumps seem to be the most durable extraction method.
+
+### The influence of extraction method and geographical height on waterpoint status
+
+```{r fig.height=10}
+multivariate(data$extraction_type_class, data$gps_height, data$status_group, log=F, c('extraction_type_class', 'gps_height', 'status_group'))
+```
+
+Different extraction methods are preferentially deployed at different heights. While gravity-based, rope- and wind-powered pumps are deployed at greater heights, hand- , motor-, submersible- and other pumps are more common at lower heights.Wind-powered pumps seem to need a certain height, since there are none at all at below ~600 m. Interestingly, for some extraction methods there also seems to be a connection between height and functionality. Thus for wind-powered and maybe also rope- and motor pumps more non functional pumps can be observed at bigger heights. For water points with 'other' extraction type non functional water points are mostly on lower heights than functional ones. For gravity-, submersible and probably also hand pumps height does not seem to influence functionality. Probable causes for greater heights having more non functional water points for some extraction methods might be the higher distance the water has to be pumped.
+
+### Which extraction methods are used for which source types andwhat kinds of water points are used for these?
+
+```{r fig.height=5}
+bivariate(data$extraction_type_class, 
+          data$source_type,
+          colors=brewer.pal(7, 'Reds'))
+```
+
+Extraction methods are not exclusively used for a specific source, but there is always one source that is mainly served by an extraction method. Extraction by gravity is mostly used for springs; hand pumps, rope pumps and other for shallow wells; motor pumps, submersibles and wind-powered pumps for boreholes.
+
+```{r fig.height=10}
+multipie(data$source_type, 
+         data$extraction_type_class, 
+         data$waterpoint_type)
+```
+Nearly every source type and extraction method mainly uses communal standpipes (single or multiple). Another very common water point type is the hand pump. There also seems to be some ambiguity, since not every water point with the extraction method hand pump has the water point type hand pump, especially for the sources river/lake and spring. This kind of ambiguity might be negative for prediction.
+For some source types if the extraction method is not specified the waterpoint type is most of the time also not specified (source types: borehole, other, shallow well). For dams, rainwater harvesting and river/lake unknown extraction types are mostly communal standpipes. For springs it is mostly improved spring, which is a vague term. This observation could help to impute NAs in this categories.
+
+### Improved functionality by political measures
+
+#### Permits
+
+```{r fig.height=10}
+multipie(data$extraction_type_class, data$permit, data$status_group) + 
+    scale_fill_manual(values = statusColor)
+```
+
+While permitting does not make a difference for some extraction methods, for others, namely wind-powered, rope pumps and motor pumps, permitting increases the fraction of functional water points.
+
+#### Public meetings
+
+```{r fig.height=10}
+multipie(data$extraction_type_class, data$public_meeting, data$status_group) + 
+    scale_fill_manual(values = statusColor)
+```
+
+Similar to permits there is an improvement in functionality of water points using specific extraction methods, namely gravity, hand pump and rope pumps.
+
+#### Payment types
+
+```{r fig.height=10}
+multipie(data$extraction_type_class, data$payment_type, data$status_group) + 
+    scale_fill_manual(values = statusColor)
+```
+
+Most extraction methods seem to be influenced little by payment type, with never pay and unknown being the worst payment types in terms of keeping water points functional. But for motor pumps, submersibles and wind-powered pumps, irregular pay seems to go along with a lower fraction of functional water points.
+
+
 
 
 ## Using NAs as a predictor
 
 One observation that was made during the analysis of the given variables was, that NAs or values representing it most of the time corresponded with a higher fraction of nonfunctional water points. Thus here a new variable will be created giving the number of NAs of the respective entry.
-As a first step NAs have to be identified and named accordingly. Since longitude and latitude are both only part of a coordinate, if one is an NA the other will be as well. To not overrepresent the NAs, the longitude variable will be removed here.
+As a first step NAs have to be identified and named accordingly. Since longitude and latitude are both only part of a coordinate, if one is an NA the other will be as well. To not over-represent the NAs, the longitude variable will be removed here.
 
 
 ```{r echo=FALSE, warning=FALSE}
@@ -1027,17 +1212,9 @@ count_na <- function(x){
 }
 data_na$num_na <- apply(data_na,1,count_na)
 
-c <- table(data.frame(variable = data_na['num_na'], 
-                      status_group = data_na['status_group']))
-c_rel <- c/rowSums(c)
-c_rel <- as.data.frame(c_rel)
-c_rel$num_na <- as.numeric(as.factor(c_rel$num_na))
-ggplot(c_rel, aes(num_na, Freq)) + 
-  facet_grid(.~status_group) + 
-  geom_point() + 
-  stat_smooth(method=lm)
-
 data$num_na <- data_na$num_na
+
+lineFrequency(data$num_na, data$status_group, 'NA Count', cor=T)
 
 ```
 
@@ -1084,13 +1261,12 @@ The map nicely shows that there are some areas in which the median age of the wa
 
 ### Plot Three
 ```{r echo=FALSE, warning=FALSE, Plot_One}
-ggplot(c_rel, aes(num_na, Freq, color=status_group)) + 
-  facet_grid(.~status_group) + 
-  geom_point() + 
-  stat_smooth(method=lm) + 
-  labs(x='NAs per entry',
-       y='Frequency',
-       title = "Data integrity correlates with water point status") + 
+p <- lineFrequency(data$num_na,
+                   data$status_group, 
+                   'NA Count') 
+p + labs(x='NAs per entry',
+         y='Frequency',
+         title = "Data integrity correlates with water point status") + 
   scale_color_manual(values=c("green", "orange", "red"), 
                      name = "Water Point Status") +
   theme_bw() +
@@ -1110,6 +1286,7 @@ The plot proved the initial observations to be correct. With higher number of NA
 
 The data set used in this exploration is very untidy. A lot of variables are redundant providing the same information at different accuracies. I tried to make a compromise in choosing the variable to keep with the aim to keep as much information as possible, while keeping the data set as clean and non-redundant in its values as possible. Some variables have a huge amount of levels. That makes prediction using them impossible. For those variables representing companies, I tried to describe them by their experience, by substituting the variable with the respective counts of water points they worked on. This gave me continuous variables to work with, but actually those variables did not add much information to the model. The other variables with too high amount of levels are regional descriptors. Since the coordinates and region names already provide information of this category, those variables were removed from the data set. But since those variables originate from federal divisions, it might be interesting to search for further information on which federal level water distribution is regulated. The analysis showed that the geographic location of the water point is very important for the prediction of the water points status'. There are several issues with this fact. The political regions are of course not the direct cause of the water points status', but they stand for several con-founders, like tourism or wealth. Using such data would probably improve the model quite a bit. Even more when using the data for lower level political regions, since this provides a higher geospatial resolution. 
 The most indicative variable next to location that is also causing part of the regional differences in water point status is the construction year, showing a linear relationship with the frequency of functional water points. 
+The extraction method used for the water points is dependent on the geographical height and the construction year. Although an extraction method is not exclusive to a source type, there is always a strong preference for a source type. Political actions to improve water point functionality (permits, public meetings and payment) influence water points with different extraction methods differently. While public meetings can be beneficial for some methods, they seem to do nothing for others or might even be adverse in increasing overall functionality.
 Additionally, the number of NAs in the data entries relates to the water point's status. This might be, because bad recording could also mean worse maintenance. But one should be careful in using data recording related variables for prediction, since it might insert a bias into the model. But at this point this observation might be used to visualize the insufficient maintenance of the water points which might be part of the problem and a way to improve the situation.
 There are a lot of other features, which show influence on the status of the water points and that were not as thoroughly analyzed. Thus there might be further things to be found in this data set. For example, motor pumps seem to be a bad way to get water. 
 In this exploration the status of 'functional needs repair' was barely discussed. This is due to the very difficult to detect influences on it. Since this state is rather transient and in between both of the other states this might be difficult in any case. Although it might be very useful at one point to detect the need of repair as early as possible, with so many water points nonfunctional the more urgent thing would be to find causes and ways to repair them for now.
